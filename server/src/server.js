@@ -16,7 +16,9 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(join(__dirname, '../../web/dist')));
 
 const PORT = process.env.PORT || 3000;
-const SKILLS_DIR = process.env.SKILLS_DIR || resolve('./examples');
+const SKILLS_DIR = process.env.SKILLS_DIR
+  ? resolve(process.env.SKILLS_DIR)
+  : resolve(__dirname, '../../examples');
 
 // ─── Skill Store ──────────────────────────────────────
 

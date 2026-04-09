@@ -1,0 +1,930 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { ChevronRight, ChevronDown, Search, Link as LinkIcon, Code, ArrowUpRight, Hash, BookOpen, Zap, Box, Globe, Layers, FileText, Copy, Check, ExternalLink, Terminal, Sparkles, ArrowRight } from 'lucide-react'
+
+const DEFAULT_ECOSYSTEMS = [
+  'dojo',
+  'openai',
+  'github',
+  'aws',
+  'vercel',
+  'docker',
+  'postgres',
+  'redis',
+  'slack',
+  'notion',
+  'twilio',
+  'stripe',
+  'ethereum',
+  'database',
+]
+
+function sortEcosystems(items) {
+  return [...new Set(items)].sort((a, b) => {
+    if (a === 'dojo') return -1
+    if (b === 'dojo') return 1
+    return a.localeCompare(b)
+  })
+}
+
+const TYPE_META = {
+  ecosystem: { color: '#A78BFA', icon: Globe, label: 'eco' },
+  standard:  { color: '#34D399', icon: Layers, label: 'std' },
+  skill:     { color: '#60A5FA', icon: Zap, label: 'skill' },
+  context:   { color: '#FBBF24', icon: BookOpen, label: 'ctx' },
+  sub:       { color: '#6EE7B7', icon: Box, label: 'sub' },
+}
+
+const ACCENT = '#A78BFA'
+const ACCENT2 = '#60A5FA'
+
+// ─── Animations keyframes injected once ───────────────
+const STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=Satoshi:wght@300;400;500;700&display=swap');
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(167,139,250,0.15); }
+  50% { box-shadow: 0 0 20px rgba(167,139,250,0.3); }
+}
+@keyframes grain {
+  0%, 100% { transform: translate(0,0); }
+  10% { transform: translate(-5%,-10%); }
+  30% { transform: translate(3%,-15%); }
+  50% { transform: translate(12%,9%); }
+  70% { transform: translate(9%,4%); }
+  90% { transform: translate(-1%,7%); }
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+::selection { background: rgba(167,139,250,0.3); color: #fff; }
+`
+
+function TypeBadge({ type, size = 'sm' }) {
+  const m = TYPE_META[type] || TYPE_META.skill
+  const Icon = m.icon
+  const isLg = size === 'lg'
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: isLg ? 6 : 4,
+      padding: isLg ? '5px 12px' : '3px 8px',
+      borderRadius: 6,
+      background: m.color + '14',
+      border: `1px solid ${m.color}30`,
+      color: m.color,
+      fontSize: isLg ? 11 : 10,
+      fontWeight: 500,
+      fontFamily: "'DM Mono', monospace",
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
+    }}>
+      <Icon style={{ width: isLg ? 13 : 11, height: isLg ? 13 : 11 }} />
+      {type}
+    </span>
+  )
+}
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => { navigator.clipboard?.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  return (
+    <button onClick={copy} tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copy(); } }} style={{
+      display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px',
+      borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)',
+      color: copied ? '#34D399' : 'rgba(255,255,255,0.4)', fontSize: 11, cursor: 'pointer',
+      fontFamily: "'DM Mono', monospace", transition: 'all 0.2s ease',
+      outline: 'none',
+    }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)' }}
+      onFocus={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+      onBlur={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)' }}
+    >
+      {copied ? <><Check style={{ width: 12, height: 12 }} /> copied</> : <><Copy style={{ width: 12, height: 12 }} /> copy</>}
+    </button>
+  )
+}
+
+// ─── Tree Node ────────────────────────────────────────
+
+function TreeNode({ node, depth, expandedNodes, toggleNode, selectedSkill, handleSelect, index = 0 }) {
+  if (!node || node.error || !node.uri) return null
+  const hasChildren = Array.isArray(node.skills) && node.skills.length > 0
+  const isExpanded = expandedNodes.has(node.uri)
+  const isSelected = selectedSkill?.uri === node.uri
+  const m = TYPE_META[node.type] || TYPE_META.skill
+  const name = node.name || node.uri.split('/').pop()
+
+  return (
+    <div style={{ animation: `slideIn 0.25s ease ${index * 0.03}s both` }}>
+      <div
+        tabIndex={0}
+        onClick={() => handleSelect(node)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            handleSelect(node)
+          }
+          if (e.key === 'ArrowRight' && hasChildren && !isExpanded) {
+            e.preventDefault()
+            toggleNode(node.uri, e)
+          }
+          if (e.key === 'ArrowLeft' && hasChildren && isExpanded) {
+            e.preventDefault()
+            toggleNode(node.uri, e)
+          }
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: `6px 12px 6px ${14 + depth * 18}px`,
+          cursor: 'pointer', borderRadius: 8, position: 'relative',
+          background: isSelected ? m.color + '18' : 'transparent',
+          transition: 'all 0.15s ease',
+          marginBottom: 1,
+          outline: 'none',
+        }}
+        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+        onMouseLeave={e => { e.currentTarget.style.background = isSelected ? m.color + '18' : 'transparent' }}
+        onFocus={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+        onBlur={e => { e.currentTarget.style.background = isSelected ? m.color + '18' : 'transparent' }}
+      >
+        {isSelected && (
+          <div style={{
+            position: 'absolute', left: 0, top: 4, bottom: 4, width: 3,
+            borderRadius: 0, background: `linear-gradient(180deg, ${m.color}, ${m.color}60)`,
+          }} />
+        )}
+
+        <span
+          tabIndex={hasChildren ? 0 : -1}
+          onClick={e => { if (hasChildren) { e.stopPropagation(); toggleNode(node.uri, e) } }}
+          onKeyDown={(e) => {
+            if (hasChildren && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              e.stopPropagation()
+              toggleNode(node.uri, e)
+            }
+          }}
+          style={{
+            width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, cursor: hasChildren ? 'pointer' : 'default',
+            borderRadius: 4,
+            transition: 'background 0.15s',
+            outline: 'none',
+          }}
+          onMouseEnter={e => { if (hasChildren) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+          onFocus={e => { if (hasChildren) e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+          onBlur={e => { e.currentTarget.style.background = 'transparent' }}
+        >
+          {hasChildren ? (isExpanded
+            ? <ChevronDown style={{ width: 13, height: 13, color: 'rgba(255,255,255,0.35)' }} />
+            : <ChevronRight style={{ width: 13, height: 13, color: 'rgba(255,255,255,0.25)' }} />
+          ) : <span style={{ width: 4, height: 4, borderRadius: '50%', background: m.color, opacity: 0.5 }} />}
+        </span>
+
+        <span style={{
+          fontSize: 13, fontWeight: isSelected ? 500 : 400,
+          color: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+          fontFamily: depth === 0 ? "'Satoshi', sans-serif" : "'DM Mono', monospace",
+          letterSpacing: depth === 0 ? '0.01em' : '-0.01em',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          transition: 'color 0.15s',
+        }}>{name}</span>
+
+        {node.skills?.length > 0 && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 9, padding: '1px 5px', borderRadius: 4,
+            background: TYPE_META.skill.color + '18', color: TYPE_META.skill.color,
+            fontFamily: "'DM Mono', monospace", fontWeight: 500, flexShrink: 0,
+          }}>{node.skills.length}</span>
+        )}
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div style={{ position: 'relative' }}>
+          <div style={{
+            position: 'absolute', left: 22 + depth * 18, top: 0, bottom: 8,
+            width: 1, background: 'rgba(255,255,255,0.06)',
+          }} />
+          {node.skills.map((child, i) => (
+            <TreeNode key={child.uri || Math.random()} node={child} depth={depth + 1}
+              expandedNodes={expandedNodes} toggleNode={toggleNode}
+              selectedSkill={selectedSkill} handleSelect={handleSelect} index={i} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Detail View ──────────────────────────────────────
+
+function DetailView({ skill, backlinks, onNavigate }) {
+  const [openSections, setOpenSections] = useState(new Set())
+  useEffect(() => setOpenSections(new Set()), [skill?.uri])
+
+  if (!skill) return (
+    <div style={{
+      height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexDirection: 'column', gap: 16,
+    }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        <Sparkles style={{ width: 28, height: 28, color: 'rgba(255,255,255,0.12)' }} />
+      </div>
+      <span style={{ fontSize: 15, color: 'rgba(255,255,255,0.25)', fontWeight: 300, fontFamily: "'Satoshi', sans-serif" }}>
+        Select a node to explore
+      </span>
+    </div>
+  )
+
+  const m = TYPE_META[skill.type] || TYPE_META.skill
+  const mono = "'DM Mono', monospace"
+  const parts = (skill.uri || '').split('/')
+  const isCtx = skill.type === 'context'
+
+  const toggleSection = id => {
+    setOpenSections(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  const Section = ({ label, icon: Icon, children, delay = 0 }) => (
+    <div style={{ marginBottom: 32, animation: `fadeUp 0.4s ease ${delay}s both` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        {Icon && <Icon style={{ width: 13, height: 13, color: 'rgba(255,255,255,0.25)' }} />}
+        <span style={{
+          fontSize: 10, fontWeight: 500, color: 'rgba(255,255,255,0.3)',
+          letterSpacing: '0.14em', fontFamily: mono, textTransform: 'uppercase',
+        }}>{label}</span>
+        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)', marginLeft: 8 }} />
+      </div>
+      {children}
+    </div>
+  )
+
+  return (
+    <div style={{ padding: '36px 44px 60px', maxWidth: '100%', margin: '0 auto' }}>
+      {/* Breadcrumb */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 2, marginBottom: 28,
+        flexWrap: 'wrap', animation: 'fadeIn 0.3s ease both',
+      }}>
+          {parts.map((part, i) => (
+            <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              {i > 0 && <ChevronRight style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />}
+              <span
+                tabIndex={i < parts.length - 1 ? 0 : -1}
+                onClick={() => i < parts.length - 1 && onNavigate({ uri: parts.slice(0, i + 1).join('/') })}
+                onKeyDown={e => {
+                  if (i < parts.length - 1 && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onNavigate({ uri: parts.slice(0, i + 1).join('/') });
+                  }
+                }}
+                style={{
+                  fontSize: 12, fontFamily: mono,
+                  color: i === parts.length - 1 ? m.color : 'rgba(255,255,255,0.3)',
+                  fontWeight: i === parts.length - 1 ? 500 : 400,
+                  cursor: i < parts.length - 1 ? 'pointer' : 'default',
+                  padding: '2px 6px', borderRadius: 4,
+                  transition: 'all 0.15s',
+                  outline: 'none',
+                }}
+                onMouseEnter={e => { if (i < parts.length - 1) e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                onFocus={e => { if (i < parts.length - 1) e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+                onBlur={e => { e.currentTarget.style.background = 'transparent' }}
+              >{part}</span>
+            </span>
+          ))}
+      </div>
+
+      {/* Title */}
+      <div style={{ animation: 'fadeUp 0.4s ease 0.05s both' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 10 }}>
+          <h1 style={{
+            fontFamily: "'Fraunces', serif", fontSize: 40, fontWeight: 300, fontStyle: 'normal',
+            color: '#fff', margin: 0, lineHeight: 1.1, letterSpacing: '-0.025em', flex: 1,
+          }}>
+            {skill.name || parts[parts.length - 1]}
+          </h1>
+          <span style={{
+            fontSize: 11, color: 'rgba(255,255,255,0.3)', fontFamily: mono,
+            padding: '5px 10px', background: 'rgba(255,255,255,0.04)',
+            borderRadius: 6, border: '1px solid rgba(255,255,255,0.06)',
+            flexShrink: 0, marginTop: 8,
+          }}>
+            v{skill.version || '0.0.0'}
+          </span>
+        </div>
+
+        {/* Type + tags */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+          <TypeBadge type={skill.type} size="lg" />
+          {skill.content_type && (
+            <span style={{
+              fontSize: 11, padding: '4px 10px', borderRadius: 6,
+              background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.35)',
+              border: '1px solid rgba(255,255,255,0.06)', fontFamily: mono,
+            }}>{skill.content_type}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Context quote */}
+      {skill.context && (
+        <div style={{
+          animation: 'fadeUp 0.4s ease 0.1s both',
+          position: 'relative', padding: '18px 22px', marginBottom: 32,
+          background: `linear-gradient(135deg, ${m.color}0A, transparent)`,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+            background: `linear-gradient(180deg, ${m.color}, ${m.color}30)`,
+          }} />
+          <p style={{
+            fontSize: 16, color: 'rgba(255,255,255,0.8)', lineHeight: 1.65, fontWeight: 300,
+            margin: 0, fontFamily: "'Satoshi', sans-serif",
+          }}>{skill.context}</p>
+        </div>
+      )}
+
+      {/* Tags */}
+      {skill.tags?.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 28, animation: 'fadeUp 0.4s ease 0.12s both' }}>
+          {skill.tags.map(tag => (
+            <span key={tag} style={{
+              fontSize: 11, padding: '4px 11px', borderRadius: 20,
+              background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.45)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              fontFamily: "'Satoshi', sans-serif", fontWeight: 400,
+            }}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Aliases */}
+      {skill.aliases?.length > 0 && (
+        <p style={{
+          fontSize: 14, color: 'rgba(255,255,255,0.3)', marginBottom: 28,
+          fontStyle: 'italic', fontFamily: "'Fraunces', serif",
+        }}>
+          also known as {skill.aliases.join(', ')}
+        </p>
+      )}
+
+      {/* Info */}
+      {skill.info && (
+        <Section label="About" icon={BookOpen} delay={0.15}>
+          <p style={{
+            fontSize: 15, color: 'rgba(255,255,255,0.6)', margin: 0, lineHeight: 1.75,
+            fontWeight: 300, fontFamily: "'Satoshi', sans-serif",
+          }}>{skill.info}</p>
+        </Section>
+      )}
+
+      {/* Body */}
+      {skill.body && (
+        <Section label={skill.name} icon={FileText} delay={0.2}>
+          <div style={{
+            fontSize: 13.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.8, fontWeight: 300,
+whiteSpace: 'pre-wrap',
+            fontFamily: "'DM Mono', monospace",
+          }}>{skill.body}</div>
+          <div style={{ marginTop: 18 }}>
+            {skill.sections.map((s, i) => {
+              const isOpen = !openSections.has(s.id)
+              return (
+                  <div key={s.id}>
+                    {i > 0 && <div  />}
+                    <div
+                      tabIndex={0}
+                      onClick={() => toggleSection(s.id)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection(s.id); } }}
+                      style={{
+                        background: isOpen ? 'rgba(255,255,255,0.03)' : 'transparent',
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px',
+                        cursor: 'pointer',
+                        transition: 'background 0.15s',
+                        outline: 'none',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                      onMouseLeave={e => e.currentTarget.style.background = isOpen ? 'rgba(255,255,255,0.03)' : 'transparent'}
+                      onFocus={e => e.currentTarget.style.background = 'rgba(255,255,255,0.06)'}
+                      onBlur={e => e.currentTarget.style.background = isOpen ? 'rgba(255,255,255,0.03)' : 'transparent'}
+                    >
+                    <span style={{ fontSize: 14, color: TYPE_META.context.color, fontFamily: mono, fontWeight: 500 }}>#</span>
+                    <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.8)', fontWeight: 400, flex: 1, fontFamily: "'Satoshi', sans-serif" }}>{s.title}</span>
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: mono }}>{s.id}</span>
+                    <ChevronDown style={{
+                      width: 14, height: 14, color: 'rgba(255,255,255,0.25)',
+                      transform: isOpen ? 'rotate(0)' : 'rotate(-90deg)',
+                      transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
+                    }} />
+                  </div>
+                  {isOpen && s.body && (
+                    <div style={{
+                      fontSize: 13.5,
+                      margin: '4px 0 10px',
+                      color: 'rgba(255,255,255,0.5)', lineHeight: 1.75, fontWeight: 300,
+                      whiteSpace: 'pre-wrap', 
+                      animation: 'fadeIn 0.2s ease both',
+                    }}>
+                      {s.body}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        
+        </Section>
+      )}
+
+
+      {/* Install */}
+      {skill.uri && (
+        <Section label={isCtx ? 'Learn' : 'Install'} icon={Terminal} delay={0.25}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            padding: '14px 18px', borderRadius: 12,
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <code style={{ fontSize: 13, fontFamily: mono, color: 'rgba(255,255,255,0.6)' }}>
+              <span style={{ color: m.color }}>$</span>
+              <span style={{ color: 'rgba(255,255,255,0.25)', margin: '0 8px' }}>dojo</span>
+              <span style={{ color: '#34D399' }}>{isCtx ? 'learn' : 'install'}</span>
+              <span style={{ color: 'rgba(255,255,255,0.5)', marginLeft: 8 }}>{skill.uri}</span>
+            </code>
+            <CopyButton text={`dojo ${isCtx ? 'learn' : 'install'} ${skill.uri}`} />
+          </div>
+        </Section>
+      )}
+
+      {/* Scripts */}
+      {skill.scripts?.length > 0 && (
+        <Section label="Scripts" icon={Code} delay={0.28}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {skill.scripts.map(script => (
+              <div key={script.id || script} style={{
+                borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '12px 18px', background: 'rgba(255,255,255,0.03)',
+                  borderBottom: (script.inline || script.description) ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                }}>
+                  <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 500, color: TYPE_META.skill.color }}>
+                    {script.id || script}
+                  </span>
+                  {script.lang && (
+                    <span style={{
+                      fontSize: 10, fontFamily: mono, color: 'rgba(255,255,255,0.3)',
+                      padding: '2px 8px', background: 'rgba(255,255,255,0.04)', borderRadius: 5,
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}>{script.lang}</span>
+                  )}
+                </div>
+                {script.description && (
+                  <div style={{ padding: '12px 18px', fontSize: 13, color: 'rgba(255,255,255,0.45)', fontWeight: 300 }}>
+                    {script.description}
+                  </div>
+                )}
+                {script.inline && (
+                  <pre style={{
+                    margin: 0, padding: '16px 20px', fontSize: 12, fontFamily: mono,
+                    color: 'rgba(255,255,255,0.5)', background: 'rgba(0,0,0,0.25)',
+                    overflowX: 'auto', lineHeight: 1.7, maxHeight: 260, overflowY: 'auto',
+                  }}><code>{script.inline}</code></pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Dependencies */}
+      {skill.depends?.length > 0 && (
+        <Section label="Dependencies" icon={LinkIcon} delay={0.3}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {skill.depends.map(dep => (
+                <div key={dep.uri}
+                  tabIndex={0}
+                  onClick={() => onNavigate({ uri: dep.uri })}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate({ uri: dep.uri }); } }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px',
+                    borderRadius: 10, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.06)',
+                    transition: 'all 0.15s ease', background: 'transparent',
+                    outline: 'none',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                    e.currentTarget.style.borderColor = TYPE_META.skill.color + '40'
+                    e.currentTarget.style.transform = 'translateX(4px)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'transparent'
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'
+                    e.currentTarget.style.transform = 'translateX(0)'
+                  }}
+                  onFocus={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                    e.currentTarget.style.borderColor = TYPE_META.skill.color + '60'
+                    e.currentTarget.style.transform = 'translateX(4px)'
+                  }}
+                  onBlur={e => {
+                    e.currentTarget.style.background = 'transparent'
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'
+                    e.currentTarget.style.transform = 'translateX(0)'
+                  }}
+                >
+                <ArrowRight style={{ width: 12, height: 12, color: TYPE_META.skill.color, opacity: 0.6 }} />
+                <span style={{ fontFamily: mono, fontSize: 13, color: TYPE_META.skill.color }}>{dep.uri}</span>
+                {dep.optional && (
+                  <span style={{
+                    fontSize: 9, padding: '2px 6px', borderRadius: 4,
+                    border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.3)',
+                    fontFamily: mono, textTransform: 'uppercase', letterSpacing: '0.05em',
+                  }}>opt</span>
+                )}
+                {dep.reason && (
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', fontWeight: 300, marginLeft: 'auto' }}>
+                    {dep.reason}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Schema */}
+      {skill.schema && (skill.schema.input || skill.schema.output) && (
+        <Section label="Schema" icon={Layers} delay={0.32}>
+          <div style={{ display: 'flex', gap: 14 }}>
+            {['input', 'output'].filter(k => skill.schema[k]).map(k => (
+              <div key={k} style={{
+                flex: 1, padding: 16, borderRadius: 12, background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <div style={{
+                  fontSize: 10, fontFamily: mono, color: k === 'input' ? ACCENT : '#34D399',
+                  marginBottom: 10, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase',
+                }}>{k}</div>
+                <pre style={{
+                  margin: 0, fontSize: 11, fontFamily: mono, color: 'rgba(255,255,255,0.45)',
+                  whiteSpace: 'pre-wrap', lineHeight: 1.65,
+                }}>
+                  {JSON.stringify(skill.schema[k].properties || skill.schema[k], null, 2)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </div>
+  )
+}
+
+// ─── Connections Panel ────────────────────────────────
+
+function ConnectionsPanel({ skill, backlinks, onNavigate }) {
+  if (!skill) return (
+    <div style={{ padding: 24, color: 'rgba(255,255,255,0.2)', fontSize: 12, textAlign: 'center', fontWeight: 300, marginTop: 48 }}>
+      No connections
+    </div>
+  )
+
+  const ConnItem = ({ uri, label, color, onClick }) => (
+    <div tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }} style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7,
+      cursor: 'pointer', transition: 'all 0.15s', fontSize: 11, outline: 'none',
+    }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.transform = 'translateX(2px)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'translateX(0)' }}
+      onFocus={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.transform = 'translateX(2px)' }}
+      onBlur={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'translateX(0)' }}
+    >
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}40` }} />
+      <span style={{
+        fontFamily: "'DM Mono', monospace", color: 'rgba(255,255,255,0.5)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+      }}>{uri}</span>
+      {label && (
+        <span style={{
+          fontSize: 9, color: 'rgba(255,255,255,0.2)', fontFamily: "'DM Mono', monospace",
+          flexShrink: 0, padding: '1px 5px', background: 'rgba(255,255,255,0.04)', borderRadius: 3,
+        }}>{label}</span>
+      )}
+    </div>
+  )
+
+  const Group = ({ title, icon: Icon, children, empty }) => (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', marginBottom: 8 }}>
+        <Icon style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.2)' }} />
+        <span style={{
+          fontSize: 9, fontWeight: 500, color: 'rgba(255,255,255,0.25)',
+          letterSpacing: '0.12em', fontFamily: "'DM Mono', monospace", textTransform: 'uppercase',
+        }}>{title}</span>
+      </div>
+      {children || (
+        <div style={{ padding: '6px 10px', fontSize: 11, color: 'rgba(255,255,255,0.15)', fontWeight: 300, fontStyle: 'italic' }}>
+          {empty}
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <div style={{ padding: '14px 8px' }}>
+      <Group title="Links" icon={ArrowUpRight} empty="None">
+        {skill.links?.length > 0 && skill.links.map((l, i) => (
+          <ConnItem key={i} uri={l.uri || l} color={TYPE_META.skill.color}
+            onClick={() => onNavigate({ uri: (l.uri || l).split('#')[0] })} />
+        ))}
+      </Group>
+      <Group title="Related" icon={Layers} empty="None">
+        {skill.related?.length > 0 && skill.related.map((r, i) => (
+          <ConnItem key={i} uri={r.uri} label={r.relation} color={TYPE_META.context.color}
+            onClick={() => onNavigate({ uri: r.uri })} />
+        ))}
+      </Group>
+      <Group title="Backlinks" icon={LinkIcon} empty="None">
+        {backlinks?.length > 0 && backlinks.map((bl, i) => (
+          <ConnItem key={i} uri={bl.from} label={bl.type} color={TYPE_META.ecosystem.color}
+            onClick={() => onNavigate({ uri: bl.from })} />
+        ))}
+      </Group>
+      <Group title="Deps" icon={ExternalLink} empty="None">
+        {skill.depends?.length > 0 && skill.depends.map((d, i) => (
+          <ConnItem key={i} uri={d.uri} label={d.optional ? 'opt' : ''} color={TYPE_META.standard.color}
+            onClick={() => onNavigate({ uri: d.uri })} />
+        ))}
+      </Group>
+    </div>
+  )
+}
+
+// ─── Main App ─────────────────────────────────────────
+
+export default function App() {
+  const [ecosystems, setEcosystems] = useState(DEFAULT_ECOSYSTEMS)
+  const [trees, setTrees] = useState({})
+  const [expandedNodes, setExpandedNodes] = useState(new Set(DEFAULT_ECOSYSTEMS))
+  const [selectedSkill, setSelectedSkill] = useState(null)
+  const [backlinks, setBacklinks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+
+  useEffect(() => {
+    const s = document.createElement('style')
+    s.textContent = STYLES
+    document.head.appendChild(s)
+    return () => document.head.removeChild(s)
+  }, [])
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      setLoading(true)
+      let ecosystemUris = DEFAULT_ECOSYSTEMS
+      try {
+        const res = await fetch('/v1/ecosystems')
+        if (res.ok) {
+          const data = await res.json()
+          const fromApi = Array.isArray(data.ecosystems)
+            ? data.ecosystems.map(item => item?.uri).filter(Boolean)
+            : []
+          if (fromApi.length > 0) ecosystemUris = sortEcosystems(fromApi)
+        }
+      } catch { /* fallback to defaults */ }
+
+      const t = {}
+      for (const eco of ecosystemUris) {
+        try {
+          const res = await fetch(`/v1/tree/${eco}`)
+          if (res.ok) t[eco] = await res.json()
+        } catch { /* skip */ }
+      }
+      const available = ecosystemUris.filter(eco => t[eco]?.uri)
+      setTrees(t)
+      setEcosystems(available)
+      setExpandedNodes(prev => new Set([...prev, ...available]))
+      setLoading(false)
+      if (available.length > 0) handleSelect(t[available[0]])
+    }
+    fetchAll()
+  }, [])
+
+  const toggleNode = (uri, e) => {
+    e?.stopPropagation()
+    setExpandedNodes(prev => { const n = new Set(prev); n.has(uri) ? n.delete(uri) : n.add(uri); return n })
+  }
+
+  const handleSelect = async (node) => {
+    if (!node?.uri) return
+    try {
+      const res = await fetch(`/v1/skills/${node.uri}`)
+      if (res.ok) { const d = await res.json(); setSelectedSkill(d.skill || d) }
+      else setSelectedSkill(node)
+    } catch { setSelectedSkill(node) }
+    try {
+      const blRes = await fetch(`/v1/backlinks/${node.uri}`)
+      if (blRes.ok) { const d = await blRes.json(); setBacklinks(d.backlinks || []) }
+      else setBacklinks([])
+    } catch { setBacklinks([]) }
+    if (!expandedNodes.has(node.uri)) {
+      setExpandedNodes(prev => new Set([...prev, node.uri]))
+    }
+  }
+
+  // Filter tree based on search query
+  const filterTree = (node, query) => {
+    if (!node) return null;
+    if (!query) return node;
+    const q = query.toLowerCase();
+    const name = node.name || node.uri.split('/').pop();
+    const matches = name.toLowerCase().includes(q) || node.uri.toLowerCase().includes(q);
+    
+    if (matches) return node; // If this node matches, show it and all its children
+    
+    if (!node.skills) return null;
+    
+    const filteredSkills = node.skills.map(child => filterTree(child, query)).filter(Boolean);
+    
+    if (filteredSkills.length > 0) {
+      return { ...node, skills: filteredSkills };
+    }
+    return null;
+  };
+
+  // Auto-expand during search
+  useEffect(() => {
+    if (searchQuery.length > 1) {
+      setExpandedNodes(prev => {
+        const newExpanded = new Set(prev);
+        const expandPath = (node) => {
+          if (!node || !node.skills) return false;
+          const q = searchQuery.toLowerCase();
+          const name = node.name || node.uri.split('/').pop();
+          const matches = name.toLowerCase().includes(q) || node.uri.toLowerCase().includes(q);
+          
+          let childMatched = false;
+          for (const child of node.skills) {
+            if (expandPath(child)) childMatched = true;
+          }
+          
+          if (childMatched || matches) {
+            newExpanded.add(node.uri);
+            return true;
+          }
+          return false;
+        };
+        
+        ecosystems.forEach(eco => {
+          expandPath(trees[eco]);
+        });
+        return newExpanded;
+      });
+    }
+  }, [searchQuery, trees, ecosystems]);
+
+  return (
+    <div style={{
+      display: 'flex', height: '100vh', width: '100vw',
+      fontFamily: "'Satoshi', sans-serif",
+      color: '#fff', background: '#0C0C0F', overflow: 'hidden',
+      position: 'relative',
+    }}>
+      {/* Sidebar */}
+      <div style={{
+        width: 272, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(12,12,15,0.8)',
+        backdropFilter: 'blur(20px)',
+        zIndex: 1,
+      }}>
+        {/* Logo */}
+        <div style={{
+          padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 12,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 400, color: '#fff', lineHeight: 1 }}>
+              dojo
+            </span>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: "'DM Mono'", marginTop: 2 }}>
+the agent knowledge layer
+            </span>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{
+            position: 'relative',
+            borderRadius: 8,
+            transition: 'box-shadow 0.2s ease',
+            boxShadow: searchFocused ? `0 0 0 1px ${ACCENT}40, 0 0 12px ${ACCENT}10` : 'none',
+          }}>
+            <Search style={{
+              width: 14, height: 14, position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)',
+              color: searchFocused ? ACCENT : 'rgba(255,255,255,0.2)', transition: 'color 0.2s',
+            }} />
+            <input type="text" placeholder="Search nodes..." value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              style={{
+                width: '100%', padding: '8px 12px 8px 34px', fontSize: 13, borderRadius: 8, boxSizing: 'border-box',
+                border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)',
+                color: '#fff', outline: 'none', fontFamily: "'Satoshi', sans-serif",
+                transition: 'border-color 0.2s',
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Tree */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <div style={{
+                width: 24, height: 24, border: `2px solid ${ACCENT}30`, borderTopColor: ACCENT,
+                borderRadius: '50%', margin: '0 auto 12px',
+                animation: 'spin 0.8s linear infinite',
+              }} />
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', fontWeight: 300 }}>Loading trees...</span>
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+          ) : (
+            ecosystems.map((eco, i) => {
+              const node = filterTree(trees[eco], searchQuery)
+              if (!node || !node.uri) return null
+              return <TreeNode key={eco} node={node} depth={0} index={i}
+                expandedNodes={expandedNodes} toggleNode={toggleNode}
+                selectedSkill={selectedSkill} handleSelect={handleSelect} />
+            })
+          )}
+        </div>
+
+        {/* Legend */}
+        <div style={{
+          padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', flexWrap: 'wrap', gap: 10,
+        }}>
+          {Object.entries(TYPE_META).map(([type, m]) => (
+            <span key={type} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: m.color, boxShadow: `0 0 4px ${m.color}40` }} />
+              {type}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Main */}
+      <div style={{ flex: 1, overflowY: 'auto', zIndex: 1 }}>
+        <DetailView skill={selectedSkill} backlinks={backlinks} onNavigate={handleSelect} />
+      </div>
+
+      {/* Right panel */}
+      <div style={{
+        width: 228, flexShrink: 0,
+        borderLeft: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(12,12,15,0.8)',
+        backdropFilter: 'blur(20px)',
+        overflowY: 'auto', zIndex: 1,
+      }}>
+        <div style={{
+          padding: '16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+          <LinkIcon style={{ width: 13, height: 13, color: 'rgba(255,255,255,0.25)' }} />
+          <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.5)' }}>Connections</span>
+        </div>
+        <ConnectionsPanel skill={selectedSkill} backlinks={backlinks} onNavigate={handleSelect} />
+      </div>
+    </div>
+  )
+}
